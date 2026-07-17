@@ -431,16 +431,16 @@ const PROPS: [&str; 11] = [
 ];
 // Two-regime tolerances (raw JSBSim units), aligned with PROPS.
 //
-// Pre-doublet (t <= 30 s, straight & level): the wasm module reproduces the
-// native MSVC build BIT-IDENTICALLY (measured 2026-07-17: all deltas exactly
-// 0.0 for 3600 steps), so this regime asserts near-zero.
+// Measured 2026-07-17 (after the memvfs <output>-strip fix): the wasm module
+// reproduces the native MSVC build BIT-IDENTICALLY across the ENTIRE 100 s
+// scenario — doublet and spiral included; every column delta is exactly 0.0.
+// (An earlier run showed post-doublet divergence that was misattributed to
+// cross-libm ULPs; the real cause was the strip removing FCS component
+// <output> bindings, deadening the wasm elevator. Lesson recorded.)
 //
-// Post-doublet: the elevator transient sweeps aero/libm inputs into ranges
-// where MSVC CRT and wasi-libm differ by ULPs, and the c172p's marginally
-// stable spiral amplifies them into wandering phase differences. Cross-libm
-// bit-equality is impossible there; the envelope bounds catch gross FDM
-// breakage instead. (Cross-RUNTIME determinism of the wasm module itself —
-// wasmtime vs V8 — IS bit-exact; proven in Phase 0.)
+// The pre-30s regime asserts near-zero; the post-30s envelopes are kept as
+// a safety net for future toolchain changes where cross-libm bit-equality
+// may genuinely break — they catch gross FDM breakage either way.
 const TOL_EXACT: f64 = 1.0e-9; // t <= 30 s
 const TOL_ENVELOPE: [f64; 11] = [
     5.0e-4,  // lat deg (~55 m)
@@ -555,11 +555,46 @@ fn main() -> Result<()> {
     let pack_path = arg("--pack", "dist/c172.jsbpack");
     let ref_csv = arg("--ref", "dist/ref_trajectory.csv");
     let out_csv = arg("--out", "dist/wasm_trajectory.csv");
+    let smoke_model = arg("--smoke-model", "");
 
     let mut cfg = Config::new();
     cfg.wasm_exceptions(true);
     let engine = Engine::new(&cfg)?;
     let module = Module::from_file(&engine, &module_path)?;
+
+    // --smoke-model <jsbsim_model>: load the given pack/model, init, step
+    // 10 s, report — a quick per-aircraft data-pack validity check.
+    if !smoke_model.is_empty() {
+        let pack = read_pack(&pack_path)?;
+        let mut j = Jsb::new(&engine, &module)?;
+        let h = j.create(1.0 / 120.0);
+        anyhow::ensure!(h > 0, "create: {}", j.last_error(0));
+        for (p, d) in &pack {
+            anyhow::ensure!(j.vfs_add(h, p, d) == JSB_OK, "vfs_add {p}");
+        }
+        let rc = j.load(h, &smoke_model);
+        anyhow::ensure!(rc == JSB_OK, "load {smoke_model}: {rc} {}", j.last_error(h));
+        let mut ic = scenario_ic();
+        ic.airspeed_tas_mps = 160.0;
+        ic.gear_down = 0;
+        anyhow::ensure!(j.init(h, &ic) == JSB_OK, "init: {}", j.last_error(h));
+        let mut inp = scenario_in(0.0);
+        inp.throttle = 0.85;
+        inp.gear_down = 0;
+        let mut last = JsbOutV1::default();
+        for i in 0..1200 {
+            let (rc, out) = j.step(h, &inp, 1);
+            anyhow::ensure!(rc == JSB_OK, "step {i}: {rc} {}", j.last_error(h));
+            last = out;
+        }
+        anyhow::ensure!(last.alt_msl_m.is_finite() && last.vtas_mps.is_finite(),
+                        "non-finite state after 10 s");
+        println!(
+            "SMOKE PASS {smoke_model}: t={:.1}s alt={:.0}m tas={:.1}m/s roll={:.2} pitch={:.2}",
+            last.sim_time_s, last.alt_msl_m, last.vtas_mps, last.roll_rad, last.pitch_rad
+        );
+        return Ok(());
+    }
 
     let pack = read_pack(&pack_path)?;
     println!("pack: {} files", pack.len());

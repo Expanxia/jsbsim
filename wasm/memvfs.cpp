@@ -20,37 +20,46 @@ std::string MemVfs::normalize(const std::string& p) {
 }
 
 std::string MemVfs::strip_output_elements(const std::string& xml) {
-  // Lightweight scan: removes every <output ...>...</output> and
-  // <output .../> element. JSBSim aircraft never nest <output>.
+  // Removes FGOutput directive blocks — `<output name=... type=...>...` /
+  // `<output file=.../>` — which are always ATTRIBUTED elements. FCS
+  // component output bindings (`<output>some/property</output>`, never
+  // attributed) MUST be preserved: stripping them silences control-surface
+  // property writes (found the hard way: the f16 hook system, and the
+  // c172p's surface-pos bindings, reference them).
   std::string out;
   out.reserve(xml.size());
   size_t i = 0;
   while (i < xml.size()) {
     size_t open = xml.find("<output", i);
-    // Must be a real element boundary: "<output>" or "<output " or "<output/".
-    if (open != std::string::npos) {
-      char after = open + 7 < xml.size() ? xml[open + 7] : '\0';
-      if (after != '>' && after != ' ' && after != '\t' && after != '\r' &&
-          after != '\n' && after != '/') {
-        out.append(xml, i, open + 7 - i);
-        i = open + 7;
-        continue;
-      }
-    }
     if (open == std::string::npos) {
       out.append(xml, i, std::string::npos);
       break;
     }
-    out.append(xml, i, open - i);
-    // Find the end of the opening tag.
+    char after = open + 7 < xml.size() ? xml[open + 7] : '\0';
+    bool boundary = after == '>' || after == ' ' || after == '\t' ||
+                    after == '\r' || after == '\n' || after == '/';
     size_t tag_end = xml.find('>', open);
-    if (tag_end == std::string::npos) break;  // malformed; drop the rest
-    if (xml[tag_end - 1] == '/') {            // self-closing
+    if (!boundary || tag_end == std::string::npos) {
+      // Not an <output> element (e.g. "<outputs") or malformed: copy through.
+      out.append(xml, i, open + 7 - i);
+      i = open + 7;
+      continue;
+    }
+    // Attribute test: '=' inside the opening tag => FGOutput directive.
+    bool has_attrs = xml.find('=', open) < tag_end;
+    if (!has_attrs) {
+      // Component output binding: keep verbatim.
+      out.append(xml, i, tag_end + 1 - i);
+      i = tag_end + 1;
+      continue;
+    }
+    out.append(xml, i, open - i);
+    if (xml[tag_end - 1] == '/') {  // self-closing directive
       i = tag_end + 1;
       continue;
     }
     size_t close = xml.find("</output>", tag_end);
-    if (close == std::string::npos) break;    // malformed; drop the rest
+    if (close == std::string::npos) break;  // malformed; drop the rest
     i = close + 9;
   }
   return out;
