@@ -194,10 +194,7 @@ fn read_pack(path: &str) -> Result<Vec<(String, Vec<u8>)>> {
     if &raw[0..4] != b"JSBP" {
         bail!("bad pack magic");
     }
-    let ver = u32::from_le_bytes(raw[4..8].try_into()?);
-    if ver != 1 {
-        bail!("bad pack version {ver}");
-    }
+    // raw[4..8] reserved (not a version); skip.
     let manifest_len = u32::from_le_bytes(raw[8..12].try_into()?) as usize;
     let mut off = 12usize + manifest_len;
     let count = u32::from_le_bytes(raw[off..off + 4].try_into()?) as usize;

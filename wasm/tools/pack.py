@@ -97,9 +97,12 @@ def pack_one(root: Path, ac_id: str, model: str, name: str, out: Path,
     Pack container (gzip'd at max level; payload is XML, ~7x; one stream so
     the shared XML compresses across files) — the manifest JSON is embedded
     (no separate .manifest.json; catalog.json is the discovery index):
-      "JSBP" | u32 version=1 | u32 manifest_len | manifest_json
+      "JSBP" | u32 _reserved | u32 manifest_len | manifest_json
             | u32 file_count | file_count*( u16 path_len | path | u32 len )
             | concatenated file bytes
+    The second word is a fixed reserved constant (1), NOT a format version —
+    it is never bumped pre-release; a stale pack is regenerated, not
+    negotiated. Kept only so the on-disk packs need no rewrite.
     """
     files = walk(root, model)
 
