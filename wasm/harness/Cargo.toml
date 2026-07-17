@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 wasmtime = { version = "46.0.1", features = ["gc"] }
 anyhow = "1"
+flate2 = "1.1"
 
 [profile.release]
 debug = false

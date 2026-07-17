@@ -181,31 +181,43 @@ fn ground_query(mut caller: Caller<'_, HostState>, _h: i32, in_ptr: i32,
 }
 
 fn read_pack(path: &str) -> Result<Vec<(String, Vec<u8>)>> {
-    let raw = std::fs::read(path).with_context(|| format!("read {path}"))?;
+    let input = std::fs::read(path).with_context(|| format!("read {path}"))?;
+    // Packs are gzip'd (1f 8b); inflate then parse the v2 container.
+    let raw = if input.len() >= 2 && input[0] == 0x1f && input[1] == 0x8b {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        flate2::read::GzDecoder::new(&input[..]).read_to_end(&mut buf)?;
+        buf
+    } else {
+        input
+    };
     if &raw[0..4] != b"JSBP" {
         bail!("bad pack magic");
     }
     let ver = u32::from_le_bytes(raw[4..8].try_into()?);
-    if ver != 1 {
+    if ver != 2 {
         bail!("bad pack version {ver}");
     }
-    let count = u32::from_le_bytes(raw[8..12].try_into()?) as usize;
-    let mut off = 12usize;
+    let manifest_len = u32::from_le_bytes(raw[8..12].try_into()?) as usize;
+    let mut off = 12usize + manifest_len;
+    let count = u32::from_le_bytes(raw[off..off + 4].try_into()?) as usize;
+    off += 4;
     let mut idx = Vec::new();
     for _ in 0..count {
         let plen = u16::from_le_bytes(raw[off..off + 2].try_into()?) as usize;
         off += 2;
         let path = String::from_utf8(raw[off..off + plen].to_vec())?;
         off += plen;
-        let fo = u32::from_le_bytes(raw[off..off + 4].try_into()?) as usize;
-        let fl = u32::from_le_bytes(raw[off + 4..off + 8].try_into()?) as usize;
-        off += 8;
-        idx.push((path, fo, fl));
+        let fl = u32::from_le_bytes(raw[off..off + 4].try_into()?) as usize;
+        off += 4;
+        idx.push((path, fl));
     }
-    let blob0 = off;
-    Ok(idx.into_iter()
-        .map(|(p, o, l)| (p, raw[blob0 + o..blob0 + o + l].to_vec()))
-        .collect())
+    let mut out = Vec::new();
+    for (p, l) in idx {
+        out.push((p, raw[off..off + l].to_vec()));
+        off += l;
+    }
+    Ok(out)
 }
 
 fn scenario_ic() -> JsbIcV1 {
