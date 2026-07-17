@@ -40,7 +40,9 @@ INCLUDES
 
 #include "FGInput.h"
 #include "FGFDMExec.h"
+#ifndef JSBSIM_WASM_MINIMAL  // kiro-wasm: no sockets in wasi-libc
 #include "input_output/FGUDPInputSocket.h"
+#endif
 #include "input_output/FGXMLFileRead.h"
 #include "input_output/FGModelLoader.h"
 #include "input_output/FGLog.h"
@@ -100,10 +102,16 @@ bool FGInput::Load(Element* el)
 
   type = to_upper(type);
 
+#ifndef JSBSIM_WASM_MINIMAL
   if (type.empty() || type == "SOCKET") {
     Input = new FGInputSocket(FDMExec, enabled);
   } else if (type == "QTJSBSIM") {
     Input = new FGUDPInputSocket(FDMExec, enabled);
+#else
+  if (type.empty() || type == "SOCKET" || type == "QTJSBSIM") {
+    FGLogging log(LogLevel::WARN);
+    log << "Socket input unavailable in wasm-minimal build; ignored.\n";
+#endif
   } else if (type != string("NONE")) {
     FGXMLLogging log(element, LogLevel::ERROR);
     log << "Unknown type of input specified in config file" << endl;

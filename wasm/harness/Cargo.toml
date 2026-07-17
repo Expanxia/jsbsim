@@ -1,0 +1,11 @@
+[package]
+name = "jsbsim-wasm-harness"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmtime = { version = "46.0.1", features = ["gc"] }
+anyhow = "1"
+
+[profile.release]
+debug = false

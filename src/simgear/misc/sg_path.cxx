@@ -406,8 +406,17 @@ void SGPath::checkAccess() const
   _rwCached = true;
 }
 
+#ifdef JSBSIM_MEMVFS
+// kiro-wasm: in-memory VFS hook (wasm/memvfs.cpp). Registered buffers take
+// precedence over the real filesystem so aircraft data can be fed as memory.
+extern "C" bool jsbsim_memvfs_exists(const char* utf8_path);
+#endif
+
 bool SGPath::exists() const
 {
+#ifdef JSBSIM_MEMVFS
+  if (jsbsim_memvfs_exists(utf8Str().c_str())) return true;
+#endif
   validate();
   return _exists;
 }

@@ -32,6 +32,14 @@ INCLUDES
 #include "input_output/FGLog.h"
 #include "simgear/io/iostreams/sgstream.hxx"
 
+#ifdef JSBSIM_MEMVFS
+#include <sstream>
+// kiro-wasm: in-memory VFS hook (wasm/memvfs.cpp). Returns the registered
+// buffer for a path, or nullptr to fall through to the real filesystem.
+extern "C" const char* jsbsim_memvfs_get(const char* utf8_path,
+                                         unsigned int* out_len);
+#endif
+
 namespace JSBSim {
 
 /*%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -46,6 +54,17 @@ Element* FGXMLFileRead::LoadXMLDocument(const SGPath& XML_filename,
   if (!filename.isNull()) {
     if (filename.extension().empty())
       filename.concat(".xml");
+#ifdef JSBSIM_MEMVFS
+    {
+      unsigned int vlen = 0;
+      const char* vdata = jsbsim_memvfs_get(filename.utf8Str().c_str(), &vlen);
+      if (vdata) {
+        std::istringstream vstream(std::string(vdata, vlen));
+        readXML(vstream, fparse, filename.utf8Str());
+        return fparse.GetDocument();
+      }
+    }
+#endif
     infile.open(filename);
     if ( !infile.is_open()) {
       if (verbose) {
