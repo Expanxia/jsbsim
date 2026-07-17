@@ -50,10 +50,12 @@ def resolve(root: Path, model: str, tag: str, fname: str) -> Path | None:
 
 
 def walk(root: Path, model: str) -> dict[str, Path]:
-    """Returns {vfs_path: abs_path} for the aircraft's transitive closure."""
+    """Returns {vfs_path: abs_path} for the aircraft's transitive closure.
+    Raises RuntimeError on a missing top XML or a parse error (so batch
+    conversion can skip the offending aircraft)."""
     top = root / "aircraft" / model / f"{model}.xml"
     if not top.is_file():
-        sys.exit(f"aircraft xml not found: {top}")
+        raise RuntimeError(f"aircraft xml not found: {top}")
     seen: dict[str, Path] = {}
     queue = [top]
     while queue:
@@ -65,7 +67,7 @@ def walk(root: Path, model: str) -> dict[str, Path]:
         try:
             tree = ET.parse(f)
         except ET.ParseError as e:
-            sys.exit(f"XML parse error in {f}: {e}")
+            raise RuntimeError(f"XML parse error in {f}: {e}")
         for el in tree.iter():
             fname = el.get("file")
             if not fname:
@@ -78,32 +80,29 @@ def walk(root: Path, model: str) -> dict[str, Path]:
     return seen
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--root", required=True, type=Path)
-    ap.add_argument("--id", required=True, help="API aircraft id (e.g. c172)")
-    ap.add_argument("--model", required=True, help="JSBSim model (e.g. c172p)")
-    ap.add_argument("--name", required=True, help="display name")
-    ap.add_argument("--out", required=True, type=Path)
-    args = ap.parse_args()
-
-    files = walk(args.root, args.model)
-    print(f"{args.id}: {len(files)} files")
-
+def display_name(root: Path, model: str) -> str:
+    """Human name from the aircraft XML's <fdm_config name=...>, else the id."""
     try:
-        commit = subprocess.run(
-            ["git", "-C", str(args.root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True).stdout.strip()
+        top = root / "aircraft" / model / f"{model}.xml"
+        name = ET.parse(top).getroot().get("name")
+        return name.strip() if name else model
     except Exception:
-        commit = "unknown"
+        return model
 
-    # Container (format v2): the manifest JSON is embedded (no separate
-    # .manifest.json — catalog.json is the discovery index), then the files.
-    #   "JSBP" | u32 version=2 | u32 manifest_len | manifest_json
-    #         | u32 file_count | file_count*( u16 path_len | path | u32 len )
-    #         | concatenated file bytes
-    # The whole container is gzip'd at max level (payload is XML, ~7x). One
-    # stream over all files shares a dictionary, beating per-file compression.
+
+def pack_one(root: Path, ac_id: str, model: str, name: str, out: Path,
+             commit: str) -> dict:
+    """Build one `aircraft/<id>.jsbpack` and return its catalog entry.
+
+    Pack container (gzip'd at max level; payload is XML, ~7x; one stream so
+    the shared XML compresses across files) — the manifest JSON is embedded
+    (no separate .manifest.json; catalog.json is the discovery index):
+      "JSBP" | u32 version=1 | u32 manifest_len | manifest_json
+            | u32 file_count | file_count*( u16 path_len | path | u32 len )
+            | concatenated file bytes
+    """
+    files = walk(root, model)
+
     ordered = sorted(files)
     index = bytearray()
     blob = bytearray()
@@ -118,14 +117,13 @@ def main() -> None:
         blob += data
 
     manifest = {
-        "id": args.id, "name": args.name, "jsbsim_model": args.model,
-        "pack_version": 2, "abi_version": 1, "source_commit": commit,
-        "files": manifest_files,
+        "id": ac_id, "name": name, "jsbsim_model": model,
+        "abi_version": 1, "source_commit": commit, "files": manifest_files,
     }
     manifest_bytes = json.dumps(manifest, separators=(",", ":")).encode()
 
     container = bytearray(b"JSBP")
-    container += struct.pack("<II", 2, len(manifest_bytes))
+    container += struct.pack("<II", 1, len(manifest_bytes))
     container += manifest_bytes
     container += struct.pack("<I", len(ordered))
     container += index
@@ -133,28 +131,79 @@ def main() -> None:
 
     packed = gzip.compress(bytes(container), compresslevel=9)
 
-    # Per-aircraft packs live under aircraft/; jsbsim.wasm + catalog + license
-    # stay at the data root.
-    aircraft_dir = args.out / "aircraft"
+    aircraft_dir = out / "aircraft"
     aircraft_dir.mkdir(parents=True, exist_ok=True)
-    pack_rel = f"aircraft/{args.id}.jsbpack"
-    pack_path = args.out / pack_rel
+    pack_rel = f"aircraft/{ac_id}.jsbpack"
+    pack_path = out / pack_rel
     pack_path.write_bytes(packed)
-    print(f"wrote {pack_path} ({len(container)} -> {len(packed)} bytes gz)")
+    print(f"  {ac_id}: {len(files)} files, {len(container)} -> {len(packed)} B gz")
 
-    catalog_path = args.out / "catalog.json"
+    return {
+        "id": ac_id, "name": name, "jsbsim_model": model, "pack": pack_rel,
+        "sha256": hashlib.sha256(packed).hexdigest(),
+    }
+
+
+def write_catalog(out: Path, entries: list[dict]) -> None:
+    """Merge `entries` into out/catalog.json (replace by id, sort by id)."""
+    catalog_path = out / "catalog.json"
     catalog = []
     if catalog_path.is_file():
         catalog = json.loads(catalog_path.read_text())
-    catalog = [e for e in catalog if e.get("id") != args.id]
-    catalog.append({
-        "id": args.id, "name": args.name, "jsbsim_model": args.model,
-        "pack": pack_rel,
-        "sha256": hashlib.sha256(pack_path.read_bytes()).hexdigest(),
-    })
+    ids = {e["id"] for e in entries}
+    catalog = [e for e in catalog if e.get("id") not in ids] + entries
     catalog.sort(key=lambda e: e["id"])
     catalog_path.write_text(json.dumps(catalog, indent=2))
-    print(f"catalog updated: {catalog_path}")
+    print(f"catalog: {len(catalog)} aircraft -> {catalog_path}")
+
+
+def git_commit(root: Path) -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True).stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", required=True, type=Path)
+    ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--all", action="store_true",
+                    help="pack every aircraft under <root>/aircraft/")
+    ap.add_argument("--id", help="API aircraft id (single mode; e.g. c172)")
+    ap.add_argument("--model", help="JSBSim model (single mode; e.g. c172p)")
+    ap.add_argument("--name", help="display name (single mode)")
+    args = ap.parse_args()
+
+    commit = git_commit(args.root)
+
+    if args.all:
+        ac_root = args.root / "aircraft"
+        models = sorted(
+            d.name for d in ac_root.iterdir()
+            if d.is_dir() and (d / f"{d.name}.xml").is_file())
+        print(f"packing {len(models)} aircraft from {ac_root}")
+        entries, failed = [], []
+        for model in models:
+            try:
+                entries.append(pack_one(
+                    args.root, model, model, display_name(args.root, model),
+                    args.out, commit))
+            except Exception as e:
+                failed.append((model, str(e)))
+                print(f"  SKIP {model}: {e}")
+        write_catalog(args.out, entries)
+        print(f"done: {len(entries)} packed, {len(failed)} skipped")
+        for model, err in failed:
+            print(f"  skipped {model}: {err}")
+        return
+
+    if not (args.id and args.model and args.name):
+        ap.error("single mode requires --id, --model, --name (or use --all)")
+    entry = pack_one(args.root, args.id, args.model, args.name, args.out, commit)
+    write_catalog(args.out, [entry])
 
 
 if __name__ == "__main__":

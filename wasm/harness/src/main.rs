@@ -182,7 +182,7 @@ fn ground_query(mut caller: Caller<'_, HostState>, _h: i32, in_ptr: i32,
 
 fn read_pack(path: &str) -> Result<Vec<(String, Vec<u8>)>> {
     let input = std::fs::read(path).with_context(|| format!("read {path}"))?;
-    // Packs are gzip'd (1f 8b); inflate then parse the v2 container.
+    // Packs are gzip'd (1f 8b); inflate then parse the v1 container.
     let raw = if input.len() >= 2 && input[0] == 0x1f && input[1] == 0x8b {
         use std::io::Read;
         let mut buf = Vec::new();
@@ -195,7 +195,7 @@ fn read_pack(path: &str) -> Result<Vec<(String, Vec<u8>)>> {
         bail!("bad pack magic");
     }
     let ver = u32::from_le_bytes(raw[4..8].try_into()?);
-    if ver != 2 {
+    if ver != 1 {
         bail!("bad pack version {ver}");
     }
     let manifest_len = u32::from_le_bytes(raw[8..12].try_into()?) as usize;
@@ -562,17 +562,77 @@ fn arg(name: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
+/// `--load-all <dir>`: for every `<dir>/*.jsbpack`, create an instance,
+/// feed the VFS, and `load_model` (model = filename stem) — the "well-formed
+/// AND JSBSim accepts it" gate for a bulk convert. Reports OK/FAIL per pack.
+fn load_all(engine: &Engine, module: &Module, dir: &str) -> Result<()> {
+    let mut packs: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|x| x == "jsbpack").unwrap_or(false))
+        .collect();
+    packs.sort();
+    println!("load-check: {} packs in {dir}", packs.len());
+    let (mut ok, mut fail) = (0u32, 0u32);
+    for path in &packs {
+        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+        let files = match read_pack(&path.to_string_lossy()) {
+            Ok(f) => f,
+            Err(e) => {
+                println!("  FAIL {stem}: read_pack {e}");
+                fail += 1;
+                continue;
+            }
+        };
+        let mut j = Jsb::new(engine, module)?;
+        let h = j.create(1.0 / 120.0);
+        let mut bad = None;
+        for (p, d) in &files {
+            if j.vfs_add(h, p, d) != JSB_OK {
+                bad = Some(format!("vfs_add {p}"));
+                break;
+            }
+        }
+        if bad.is_none() {
+            let rc = j.load(h, &stem);
+            if rc != JSB_OK {
+                bad = Some(format!("load {rc}: {}", j.last_error(h)));
+            }
+        }
+        let _ = j.f_destroy.call(&mut j.store, h);
+        match bad {
+            None => {
+                ok += 1;
+            }
+            Some(e) => {
+                println!("  FAIL {stem}: {e}");
+                fail += 1;
+            }
+        }
+    }
+    println!("load-check: {ok} loaded, {fail} failed");
+    if fail > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let module_path = arg("--module", "dist/jsbsim.wasm");
     let pack_path = arg("--pack", "dist/c172.jsbpack");
     let ref_csv = arg("--ref", "dist/ref_trajectory.csv");
     let out_csv = arg("--out", "dist/wasm_trajectory.csv");
     let smoke_model = arg("--smoke-model", "");
+    let load_all_dir = arg("--load-all", "");
 
     let mut cfg = Config::new();
     cfg.wasm_exceptions(true);
     let engine = Engine::new(&cfg)?;
     let module = Module::from_file(&engine, &module_path)?;
+
+    // --load-all <dir>: load-check every pack in a directory (bulk-convert gate).
+    if !load_all_dir.is_empty() {
+        return load_all(&engine, &module, &load_all_dir);
+    }
 
     // --smoke-model <jsbsim_model>: load the given pack/model, init, step
     // 10 s, report — a quick per-aircraft data-pack validity check.
