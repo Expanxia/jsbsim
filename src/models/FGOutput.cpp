@@ -41,7 +41,9 @@ INCLUDES
 
 #include "FGOutput.h"
 #include "input_output/FGOutputTextFile.h"
+#ifndef JSBSIM_WASM_MINIMAL  // kiro-wasm: no sockets in wasi-libc
 #include "input_output/FGOutputFG.h"
+#endif
 #include "input_output/FGXMLFileRead.h"
 #include "input_output/FGModelLoader.h"
 #include "input_output/FGLog.h"
@@ -213,12 +215,18 @@ bool FGOutput::Load(int subSystems, std::string protocol, std::string type,
     FGOutputTextFile* OutputTextFile = new FGOutputTextFile(FDMExec);
     OutputTextFile->SetDelimiter("\t");
     Output = OutputTextFile;
+#ifndef JSBSIM_WASM_MINIMAL
   } else if (type == "SOCKET") {
     Output = new FGOutputSocket(FDMExec);
     name += ":" + port + "/" + protocol;
   } else if (type == "FLIGHTGEAR") {
     Output = new FGOutputFG(FDMExec);
     name += ":" + port + "/" + protocol;
+#else
+  } else if (type == "SOCKET" || type == "FLIGHTGEAR") {
+    FGLogging log(LogLevel::WARN);
+    log << "Socket output unavailable in wasm-minimal build; ignored.\n";
+#endif
   } else if (type == "TERMINAL") {
     // Not done yet
   } else if (type != string("NONE")) {
@@ -266,10 +274,16 @@ bool FGOutput::Load(Element* document, const SGPath& dir)
     Output = new FGOutputTextFile(FDMExec);
   } else if (type == "TABULAR") {
     Output = new FGOutputTextFile(FDMExec);
+#ifndef JSBSIM_WASM_MINIMAL
   } else if (type == "SOCKET") {
     Output = new FGOutputSocket(FDMExec);
   } else if (type == "FLIGHTGEAR") {
     Output = new FGOutputFG(FDMExec);
+#else
+  } else if (type == "SOCKET" || type == "FLIGHTGEAR") {
+    FGLogging log(LogLevel::WARN);
+    log << "Socket output unavailable in wasm-minimal build; ignored.\n";
+#endif
   } else if (type == "TERMINAL") {
     // Not done yet
   } else if (type != string("NONE")) {
