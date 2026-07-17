@@ -596,6 +596,65 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // --takeoff-smoke <elev_m>: c172p ground start at the given terrain
+    // elevation, full throttle, rotate at 57 KCAS — validates gear ground-roll
+    // physics through the host ground bridge (the LGA-takeoff engine path).
+    let takeoff_elev = arg("--takeoff-smoke", "");
+    if !takeoff_elev.is_empty() {
+        let elev: f64 = takeoff_elev.parse().context("--takeoff-smoke <elev_m>")?;
+        let pack = read_pack(&pack_path)?;
+        let mut j = Jsb::new(&engine, &module)?;
+        j.store.data_mut().ground_elev_m = elev;
+        let h = j.create(1.0 / 120.0);
+        anyhow::ensure!(h > 0, "create: {}", j.last_error(0));
+        for (p, d) in &pack {
+            anyhow::ensure!(j.vfs_add(h, p, d) == JSB_OK, "vfs_add {p}");
+        }
+        anyhow::ensure!(j.load(h, "c172p") == JSB_OK, "load: {}", j.last_error(h));
+        let mut ic = scenario_ic();
+        ic.alt_msl_m = elev + 1.3; // drop onto the gear
+        ic.airspeed_tas_mps = 0.0;
+        ic.gamma_deg = 0.0;
+        ic.heading_true_deg = 44.0;
+        anyhow::ensure!(j.init(h, &ic) == JSB_OK, "init: {}", j.last_error(h));
+
+        let mut on_ground_seen = false;
+        let mut rotate_t = 0.0f64;
+        let mut last = JsbOutV1::default();
+        for i in 0..(60 * 120) {
+            let mut inp = scenario_in(0.0);
+            inp.throttle = 1.0;
+            inp.rudder = -0.08; // counter torque on the roll
+            let kcas = last.vcas_mps * 1.9438;
+            if kcas > 57.0 || rotate_t > 0.0 {
+                if rotate_t == 0.0 {
+                    rotate_t = last.sim_time_s;
+                }
+                inp.elevator = -0.22;
+            }
+            let (rc, out) = j.step(h, &inp, 1);
+            anyhow::ensure!(rc == JSB_OK, "step {i}: {rc} {}", j.last_error(h));
+            last = out;
+            if i < 240 && (out.status_flags & 1) != 0 {
+                on_ground_seen = true;
+            }
+            if out.alt_agl_m > 30.0 {
+                break;
+            }
+        }
+        anyhow::ensure!(on_ground_seen, "aircraft never registered ground contact");
+        anyhow::ensure!(last.alt_agl_m > 30.0,
+            "never climbed above 30 m AGL (last agl {:.1} m, kcas {:.1})",
+            last.alt_agl_m, last.vcas_mps * 1.9438);
+        println!(
+            "TAKEOFF SMOKE PASS: rotated t={rotate_t:.1}s, airborne AGL {:.0} m at t={:.1}s, \
+             kcas {:.0}, pitch {:.1} deg, ground_queries/step={}",
+            last.alt_agl_m, last.sim_time_s, last.vcas_mps * 1.9438,
+            last.pitch_rad.to_degrees(), last.ground_queries
+        );
+        return Ok(());
+    }
+
     let pack = read_pack(&pack_path)?;
     println!("pack: {} files", pack.len());
 
