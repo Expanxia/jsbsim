@@ -17,6 +17,7 @@ Usage:
                  --name "Cessna C-172P" --out ../dist
 """
 import argparse
+import gzip
 import hashlib
 import json
 import struct
@@ -89,27 +90,6 @@ def main() -> None:
     files = walk(args.root, args.model)
     print(f"{args.id}: {len(files)} files")
 
-    index = []
-    blob = bytearray()
-    manifest_files = []
-    for vfs in sorted(files):
-        data = files[vfs].read_bytes()
-        index.append((vfs.encode(), len(blob), len(data)))
-        manifest_files.append(
-            {"path": vfs, "bytes": len(data),
-             "sha256": hashlib.sha256(data).hexdigest()})
-        blob += data
-
-    head = bytearray(b"JSBP")
-    head += struct.pack("<II", 1, len(index))
-    for path, off, ln in index:
-        head += struct.pack("<H", len(path)) + path + struct.pack("<II", off, ln)
-
-    args.out.mkdir(parents=True, exist_ok=True)
-    pack_path = args.out / f"{args.id}.jsbpack"
-    pack_path.write_bytes(bytes(head) + bytes(blob))
-    print(f"wrote {pack_path} ({pack_path.stat().st_size} bytes)")
-
     try:
         commit = subprocess.run(
             ["git", "-C", str(args.root), "rev-parse", "HEAD"],
@@ -117,13 +97,50 @@ def main() -> None:
     except Exception:
         commit = "unknown"
 
+    # Container (format v2): the manifest JSON is embedded (no separate
+    # .manifest.json — catalog.json is the discovery index), then the files.
+    #   "JSBP" | u32 version=2 | u32 manifest_len | manifest_json
+    #         | u32 file_count | file_count*( u16 path_len | path | u32 len )
+    #         | concatenated file bytes
+    # The whole container is gzip'd at max level (payload is XML, ~7x). One
+    # stream over all files shares a dictionary, beating per-file compression.
+    ordered = sorted(files)
+    index = bytearray()
+    blob = bytearray()
+    manifest_files = []
+    for vfs in ordered:
+        data = files[vfs].read_bytes()
+        path = vfs.encode()
+        index += struct.pack("<H", len(path)) + path + struct.pack("<I", len(data))
+        manifest_files.append(
+            {"path": vfs, "bytes": len(data),
+             "sha256": hashlib.sha256(data).hexdigest()})
+        blob += data
+
     manifest = {
         "id": args.id, "name": args.name, "jsbsim_model": args.model,
-        "pack_version": 1, "abi_version": 1, "source_commit": commit,
+        "pack_version": 2, "abi_version": 1, "source_commit": commit,
         "files": manifest_files,
     }
-    (args.out / f"{args.id}.manifest.json").write_text(
-        json.dumps(manifest, indent=2))
+    manifest_bytes = json.dumps(manifest, separators=(",", ":")).encode()
+
+    container = bytearray(b"JSBP")
+    container += struct.pack("<II", 2, len(manifest_bytes))
+    container += manifest_bytes
+    container += struct.pack("<I", len(ordered))
+    container += index
+    container += blob
+
+    packed = gzip.compress(bytes(container), compresslevel=9)
+
+    # Per-aircraft packs live under aircraft/; jsbsim.wasm + catalog + license
+    # stay at the data root.
+    aircraft_dir = args.out / "aircraft"
+    aircraft_dir.mkdir(parents=True, exist_ok=True)
+    pack_rel = f"aircraft/{args.id}.jsbpack"
+    pack_path = args.out / pack_rel
+    pack_path.write_bytes(packed)
+    print(f"wrote {pack_path} ({len(container)} -> {len(packed)} bytes gz)")
 
     catalog_path = args.out / "catalog.json"
     catalog = []
@@ -132,7 +149,7 @@ def main() -> None:
     catalog = [e for e in catalog if e.get("id") != args.id]
     catalog.append({
         "id": args.id, "name": args.name, "jsbsim_model": args.model,
-        "pack": f"{args.id}.jsbpack",
+        "pack": pack_rel,
         "sha256": hashlib.sha256(pack_path.read_bytes()).hexdigest(),
     })
     catalog.sort(key=lambda e: e["id"])
