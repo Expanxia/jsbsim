@@ -1,11 +1,9 @@
 # kiro-wasm: JSBSim as a standalone WASM module
 
 This directory (branch `kiro-wasm`) builds `jsbsim.wasm` — a WASI reactor
-module exposing a flat, versioned C ABI (`abi.h`) — for consumption by the
-Kiro engine (native via wasmtime, web via the browser's WASM engine).
-No emscripten, no JS glue, no filesystem requirement.
-
-Plan/status: `Kiro/docs/plans/jsbsim_wasm_flight_plan.md` (+`_status`).
+module exposing a flat C ABI (`abi.h`) — for a host engine to run (native via
+wasmtime, web via the browser's WASM engine). No emscripten, no JS glue, no
+filesystem requirement.
 
 ## Layout
 
