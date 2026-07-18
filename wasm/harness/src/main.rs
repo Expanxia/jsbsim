@@ -724,6 +724,55 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // --settle-smoke <elev_m>: c172p dropped onto the gear at idle — asserts a
+    // calm settle (no launch/bounce). Catches IC-vs-terrain bugs that only
+    // show at NEGATIVE ellipsoidal elevations (e.g. NYC at -27 m).
+    let settle_elev = arg("--settle-smoke", "");
+    if !settle_elev.is_empty() {
+        let elev: f64 = settle_elev.parse().context("--settle-smoke <elev_m>")?;
+        let pack = read_pack(&pack_path)?;
+        let mut j = Jsb::new(&engine, &module)?;
+        j.store.data_mut().ground_elev_m = elev;
+        let h = j.create(1.0 / 120.0);
+        anyhow::ensure!(h > 0, "create: {}", j.last_error(0));
+        for (p, d) in &pack {
+            anyhow::ensure!(j.vfs_add(h, p, d) == JSB_OK, "vfs_add {p}");
+        }
+        anyhow::ensure!(j.load(h, "c172p") == JSB_OK, "load: {}", j.last_error(h));
+        let mut ic = scenario_ic();
+        ic.alt_msl_m = elev + 1.3;
+        ic.airspeed_tas_mps = 0.0;
+        ic.gamma_deg = 0.0;
+        ic.heading_true_deg = 44.0;
+        anyhow::ensure!(j.init(h, &ic) == JSB_OK, "init: {}", j.last_error(h));
+
+        let mut max_up_mps = 0.0f64;
+        let mut max_agl_m = 0.0f64;
+        let mut last = JsbOutV1::default();
+        for i in 0..(6 * 120) {
+            let mut inp = scenario_in(0.0);
+            inp.throttle = 0.0;
+            let (rc, out) = j.step(h, &inp, 1);
+            anyhow::ensure!(rc == JSB_OK, "step {i}: {rc} {}", j.last_error(h));
+            last = out;
+            max_up_mps = max_up_mps.max(-out.vd_mps);
+            max_agl_m = max_agl_m.max(out.alt_agl_m);
+        }
+        anyhow::ensure!(
+            max_up_mps < 2.0 && max_agl_m < 5.0,
+            "spawn launch: max upward {:.1} m/s, max AGL {:.1} m (expected a \
+             calm settle; IC terrain bug at elev {:.1}?)",
+            max_up_mps, max_agl_m, elev
+        );
+        anyhow::ensure!((last.status_flags & 1) != 0, "never settled on ground");
+        println!(
+            "SETTLE SMOKE PASS (elev {:.1}): max up {:.2} m/s, max AGL {:.2} m, \
+             final AGL {:.2} m",
+            elev, max_up_mps, max_agl_m, last.alt_agl_m
+        );
+        return Ok(());
+    }
+
     // --steer-smoke <elev_m>: c172p ground start, taxi throttle, FULL rudder —
     // validates that the rudder command also drives nosewheel steering
     // (fcs/steer-cmd-norm via SetDsCmd in the facade). Rudder aero alone has
