@@ -381,6 +381,11 @@ int32_t jsb_step_io(int32_t h, const JsbInV1* in, JsbOutV1* out,
     fcs->SetDaCmd(clampd(in->aileron, -1, 1));
     fcs->SetDeCmd(clampd(in->elevator, -1, 1));
     fcs->SetDrCmd(clampd(in->rudder, -1, 1));
+    // Rudder pedals also command nosewheel steering (fcs/steer-cmd-norm).
+    // Steerable gear scales this by max_steer (aircraft FCS channels, e.g. the
+    // F-16 speed-scheduled steer-pos-deg, can override); retracted/fixed gear
+    // ignores it, so it is inert in the air.
+    fcs->SetDsCmd(clampd(in->rudder, -1, 1));
     fcs->SetThrottleCmd(-1, clampd(in->throttle, 0, 1));
     fcs->SetDfCmd(clampd(in->flaps, 0, 1));
     fcs->SetLBrake(clampd(in->brake_left, 0, 1));
