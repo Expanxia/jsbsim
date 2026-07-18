@@ -724,6 +724,71 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // --steer-smoke <elev_m>: c172p ground start, taxi throttle, FULL rudder —
+    // validates that the rudder command also drives nosewheel steering
+    // (fcs/steer-cmd-norm via SetDsCmd in the facade). Rudder aero alone has
+    // almost no authority at taxi speed, so a large heading swing proves the
+    // gear is steering; the pre-fix module fails this.
+    let steer_elev = arg("--steer-smoke", "");
+    if !steer_elev.is_empty() {
+        let elev: f64 = steer_elev.parse().context("--steer-smoke <elev_m>")?;
+        let pack = read_pack(&pack_path)?;
+        let mut j = Jsb::new(&engine, &module)?;
+        j.store.data_mut().ground_elev_m = elev;
+        let h = j.create(1.0 / 120.0);
+        anyhow::ensure!(h > 0, "create: {}", j.last_error(0));
+        for (p, d) in &pack {
+            anyhow::ensure!(j.vfs_add(h, p, d) == JSB_OK, "vfs_add {p}");
+        }
+        anyhow::ensure!(j.load(h, "c172p") == JSB_OK, "load: {}", j.last_error(h));
+        let mut ic = scenario_ic();
+        ic.alt_msl_m = elev + 1.3; // drop onto the gear
+        ic.airspeed_tas_mps = 0.0;
+        ic.gamma_deg = 0.0;
+        ic.heading_true_deg = 44.0;
+        anyhow::ensure!(j.init(h, &ic) == JSB_OK, "init: {}", j.last_error(h));
+
+        let mut on_ground_seen = false;
+        let mut prev_yaw = f64::NAN;
+        let mut turned_rad = 0.0f64;
+        let mut last = JsbOutV1::default();
+        for i in 0..(20 * 120) {
+            let mut inp = scenario_in(0.0);
+            inp.throttle = 0.35; // taxi power, well below rotation speed
+            inp.rudder = 1.0;
+            let (rc, out) = j.step(h, &inp, 1);
+            anyhow::ensure!(rc == JSB_OK, "step {i}: {rc} {}", j.last_error(h));
+            last = out;
+            if (out.status_flags & 1) != 0 {
+                on_ground_seen = true;
+            }
+            if prev_yaw.is_finite() {
+                let d = (out.yaw_rad - prev_yaw + std::f64::consts::PI)
+                    .rem_euclid(2.0 * std::f64::consts::PI)
+                    - std::f64::consts::PI;
+                turned_rad += d;
+            }
+            prev_yaw = out.yaw_rad;
+        }
+        let turned_deg = turned_rad.to_degrees();
+        anyhow::ensure!(on_ground_seen, "aircraft never registered ground contact");
+        anyhow::ensure!(last.alt_agl_m < 5.0, "left the ground (agl {:.1} m)", last.alt_agl_m);
+        // Signed on purpose: steering must follow the rudder command's
+        // direction (+). Without it the c172 drifts NEGATIVE from engine
+        // torque/slipstream (measured -73.5 deg), so sign is the discriminator.
+        anyhow::ensure!(
+            turned_deg > 90.0,
+            "nosewheel not steering: heading changed {:.1} deg in 20 s of \
+             full-rudder taxi (expected > +90 in the rudder's direction)",
+            turned_deg
+        );
+        println!(
+            "STEER SMOKE PASS: turned {:.0} deg in 20 s, ground speed {:.1} m/s, agl {:.1} m",
+            turned_deg, last.vground_mps, last.alt_agl_m
+        );
+        return Ok(());
+    }
+
     let pack = read_pack(&pack_path)?;
     println!("pack: {} files", pack.len());
 
