@@ -13,7 +13,7 @@
 
 #define JSB_GROUND_MAX_PER_BATCH 64u
 
-namespace kiro {
+namespace pree {
 
 class HostGroundCallback : public JSBSim::FGGroundCallback {
 public:
@@ -56,5 +56,5 @@ private:
   mutable KiroGroundOutV1 cache_out_ = {};
 };
 
-}  // namespace kiro
+}  // namespace pree
 #endif
