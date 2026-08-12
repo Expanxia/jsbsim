@@ -1,5 +1,5 @@
 // kiro-wasm ground bridge: FGGroundCallback subclass that forwards terrain
-// queries to the host through the single wasm import env.kiro_ground_query.
+// queries to the host through the single wasm import env.pree_ground_query.
 // Contract in abi.h §KiroGround*: geodetic in, ECEF meters out, AGL meters.
 // On miss the WGS84 ellipsoid at elevation 0 answers (FGDefaultGroundCallback
 // behavior). Results are cached on quantized lat/lon within a step batch and
