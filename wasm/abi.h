@@ -110,7 +110,7 @@ typedef struct JsbOutV1 {
   uint32_t trapped;                   /* reserved, 0 */
 } JsbOutV1;
 
-/* Host ground-query import contract (env.kiro_ground_query).
+/* Host ground-query import contract (env.pree_ground_query).
  * Input position is geodetic; outputs are ECEF meters (WGS84).
  * status: 0 hit, 1 miss (facade falls back to the reference ellipsoid). */
 typedef struct KiroGroundInV1 {

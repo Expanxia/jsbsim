@@ -6,8 +6,8 @@
 #include "math/FGColumnVector3.h"
 
 extern "C" __attribute__((import_module("env"),
-                          import_name("kiro_ground_query")))
-int32_t kiro_ground_query(int32_t handle, const KiroGroundInV1* in,
+                          import_name("pree_ground_query")))
+int32_t pree_ground_query(int32_t handle, const KiroGroundInV1* in,
                           KiroGroundOutV1* out);
 
 namespace kiro {
@@ -69,7 +69,7 @@ double HostGroundCallback::GetAGLevel(double, const JSBSim::FGLocation& location
     KiroGroundOutV1 out = {};
     out.struct_size = sizeof(KiroGroundOutV1);
     ++queries_;
-    int32_t rc = kiro_ground_query(handle_, &in, &out);
+    int32_t rc = pree_ground_query(handle_, &in, &out);
     if (rc == 0 && out.status == 0) {
       cache_out_ = out;
       cache_lat_ = qlat;

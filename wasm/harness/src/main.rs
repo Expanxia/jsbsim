@@ -31,7 +31,7 @@ impl Jsb {
     fn new(engine: &Engine, module: &Module) -> Result<Self> {
         let mut linker: Linker<HostState> = Linker::new(engine);
         wasi_stubs::add_to_linker(&mut linker)?;
-        linker.func_wrap("env", "kiro_ground_query", ground_query)?;
+        linker.func_wrap("env", "pree_ground_query", ground_query)?;
         let mut store = Store::new(
             engine,
             HostState { ground_elev_m: 0.0, ground_miss: false,
