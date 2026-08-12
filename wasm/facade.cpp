@@ -1,4 +1,4 @@
-// kiro-wasm facade: the flat C ABI over FGFDMExec (contract in abi.h).
+// pree-wasm facade: the flat C ABI over FGFDMExec (contract in abi.h).
 // Exceptions never escape an export; instances are slot+generation handles.
 #include "abi.h"
 #include "memvfs.h"
@@ -37,8 +37,8 @@ constexpr double kLbsToKg = 0.45359237;
 
 struct Instance {
   std::unique_ptr<JSBSim::FGFDMExec> fdm;
-  kiro::MemVfs vfs;
-  kiro::HostGroundCallback* ground = nullptr;  // owned by FGInertial
+  pree::MemVfs vfs;
+  pree::HostGroundCallback* ground = nullptr;  // owned by FGInertial
   std::vector<SGPropertyNode_ptr> props;       // prop-id cache (1-based ids)
   std::string last_error;
   bool loaded = false;
@@ -75,8 +75,8 @@ void set_error(Instance* inst, const std::string& msg) {
 
 // Scope guard: JSBSim's VFS hooks consult the "active" VFS.
 struct VfsScope {
-  explicit VfsScope(Instance* i) { kiro::set_active_vfs(&i->vfs); }
-  ~VfsScope() { kiro::set_active_vfs(nullptr); }
+  explicit VfsScope(Instance* i) { pree::set_active_vfs(&i->vfs); }
+  ~VfsScope() { pree::set_active_vfs(nullptr); }
 };
 
 bool finite_or_zero(double v) { return std::isfinite(v); }
@@ -108,7 +108,7 @@ JSB_EXPORT(jsb_abi_version) uint32_t jsb_abi_version() { return JSB_ABI_VERSION;
 
 JSB_EXPORT(jsb_build_info) int32_t jsb_build_info(char* buf, uint32_t cap) {
   static const std::string info =
-      std::string("JSBSim ") + JSBSIM_VERSION + " kiro-wasm abi=1 minimal=1";
+      std::string("JSBSim ") + JSBSIM_VERSION + " pree-wasm abi=1 minimal=1";
   if (buf && cap > 0) {
     uint32_t n = (uint32_t)info.size() < cap - 1 ? (uint32_t)info.size() : cap - 1;
     std::memcpy(buf, info.data(), n);
@@ -154,7 +154,7 @@ JSB_EXPORT(jsb_create) int32_t jsb_create(const JsbCreateV1* cfg) {
     // Ground bridge: replace the default callback, keep JSBSim's ellipse.
     Instance* i = g_slots[idx].inst.get();
     auto inertial = i->fdm->GetInertial();
-    auto* gcb = new kiro::HostGroundCallback(h, inertial->GetSemimajor(),
+    auto* gcb = new pree::HostGroundCallback(h, inertial->GetSemimajor(),
                                              inertial->GetSemiminor());
     inertial->SetGroundCallback(gcb);
     i->ground = gcb;

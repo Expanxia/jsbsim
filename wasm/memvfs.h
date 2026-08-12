@@ -8,7 +8,7 @@
 #include <map>
 #include <string>
 
-namespace kiro {
+namespace pree {
 
 class MemVfs {
 public:
@@ -35,7 +35,7 @@ private:
 void set_active_vfs(const MemVfs* vfs);
 const MemVfs* active_vfs();
 
-}  // namespace kiro
+}  // namespace pree
 
 extern "C" {
 bool jsbsim_memvfs_exists(const char* utf8_path);

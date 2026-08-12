@@ -10,7 +10,7 @@ extern "C" __attribute__((import_module("env"),
 int32_t pree_ground_query(int32_t handle, const KiroGroundInV1* in,
                           KiroGroundOutV1* out);
 
-namespace kiro {
+namespace pree {
 
 namespace {
 constexpr double kFtToM = 0.3048;
@@ -98,4 +98,4 @@ double HostGroundCallback::GetAGLevel(double, const JSBSim::FGLocation& location
   return result->agl_m * kMToFt;
 }
 
-}  // namespace kiro
+}  // namespace pree

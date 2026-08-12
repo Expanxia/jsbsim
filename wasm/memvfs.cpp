@@ -1,7 +1,7 @@
 #include "memvfs.h"
 #include "abi.h"
 
-namespace kiro {
+namespace pree {
 
 namespace {
 const MemVfs* g_active = nullptr;
@@ -101,19 +101,19 @@ void MemVfs::clear() {
   total_bytes_ = 0;
 }
 
-}  // namespace kiro
+}  // namespace pree
 
 extern "C" bool jsbsim_memvfs_exists(const char* utf8_path) {
-  const kiro::MemVfs* v = kiro::active_vfs();
+  const pree::MemVfs* v = pree::active_vfs();
   if (!v || !utf8_path) return false;
-  return v->exists(kiro::MemVfs::normalize(utf8_path));
+  return v->exists(pree::MemVfs::normalize(utf8_path));
 }
 
 extern "C" const char* jsbsim_memvfs_get(const char* utf8_path,
                                          unsigned int* out_len) {
-  const kiro::MemVfs* v = kiro::active_vfs();
+  const pree::MemVfs* v = pree::active_vfs();
   if (!v || !utf8_path || !out_len) return nullptr;
-  const std::string* s = v->get(kiro::MemVfs::normalize(utf8_path));
+  const std::string* s = v->get(pree::MemVfs::normalize(utf8_path));
   if (!s) return nullptr;
   *out_len = static_cast<unsigned int>(s->size());
   return s->data();

@@ -1,4 +1,4 @@
-# kiro-wasm: builds jsbsim.wasm — a standalone WASI reactor module exposing
+# pree-wasm: builds jsbsim.wasm — a standalone WASI reactor module exposing
 # the flat C ABI in abi.h. Configure with the wasi-sdk toolchain file:
 #   cmake -B build -G Ninja \
 #     -DCMAKE_TOOLCHAIN_FILE=<wasi-sdk>/share/cmake/wasi-sdk.cmake \
@@ -37,7 +37,7 @@ set(EH_FLAGS -fwasm-exceptions -mllvm -wasm-use-legacy-eh=false)
 add_library(jsbcore STATIC ${JSB_CPP})
 target_include_directories(jsbcore PUBLIC "${JSB_SRC}")
 target_compile_definitions(jsbcore PUBLIC
-  JSBSIM_VERSION="1.3.x-kiro-wasm"
+  JSBSIM_VERSION="1.3.x-pree-wasm"
   JSBSIM_MEMVFS
   JSBSIM_WASM_MINIMAL)
 target_compile_options(jsbcore PUBLIC ${EH_FLAGS})
